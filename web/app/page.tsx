@@ -71,6 +71,7 @@ export default function Dashboard() {
   const [chart, setChart] = useState<ChartPoint[]>([]);
   const [range, setRange] = useState<Range>("30m");
   const [events, setEvents] = useState<ActuatorEvent[]>([]);
+  const [demoActuators, setDemoActuators] = useState({ pump: false, fan: false, grow_light: false });
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const [soilMin, setSoilMin] = useState("");
   const [tempMax, setTempMax] = useState("");
@@ -87,12 +88,49 @@ export default function Dashboard() {
     try {
       const list: Device[] = await fetch("/api/devices").then((r) => r.json());
       if (!Array.isArray(list)) return;
-      setDevices(list);
-      const id = selected || list[0]?.id;
+      const id = selected || list.find((item) => item.id === "gh-01")?.id || list[0]?.id;
       if (!id) return;
       if (!selected) setSelected(id);
 
-      // 30 menit: data mentah. 24 jam / 7 hari: rata-rata per jam dari view hourly_stats
+      // Greenhouse 2 menggunakan data simulasi lokal; tidak memerlukan ESP32 aktif.
+      if (id === "gh-02") {
+        const now = Date.now();
+        const demoReading: Reading = {
+          temperature: 26.4,
+          humidity: 68,
+          soil_moisture: null,
+          light: 72,
+          pump: demoActuators.pump,
+          fan: demoActuators.fan,
+          grow_light: demoActuators.grow_light,
+          created_at: new Date(now).toISOString(),
+        };
+        const demoDevice = list.find((item) => item.id === "gh-02");
+        if (demoDevice) {
+          setDevices(list.map((item) => item.id === "gh-02"
+            ? { ...item, online: true, latest: demoReading }
+            : item));
+        } else {
+          setDevices(list);
+        }
+        setEvents([]);
+        const pointCount = range === "30m" ? 16 : range === "24h" ? 24 : 7;
+        const interval = range === "30m" ? 2 * 60_000 : range === "24h" ? 60 * 60_000 : 24 * 60 * 60_000;
+        setChart(Array.from({ length: pointCount }, (_, index) => {
+          const time = now - (pointCount - 1 - index) * interval;
+          return {
+            t: new Date(time).toISOString(),
+            temperature: Number((26.1 + Math.sin(index / 2.8) * 0.7).toFixed(1)),
+            soil_moisture: null,
+            light: Number((71 + Math.cos(index / 3) * 3).toFixed(1)),
+          };
+        }));
+        setUpdatedAt(new Date());
+        return;
+      }
+
+      setDevices(list);
+      // Greenhouse 1 mengambil data asli dari API/Supabase.
       const readings = await fetch(`/api/readings?device_id=${id}&hours=0.5`).then((r) => r.json());
       setEvents(readings.events ?? []);
       if (range === "30m") {
@@ -111,7 +149,7 @@ export default function Dashboard() {
           (res.hourly ?? []).map((h: { hour: string; avg_temp: number; avg_soil: number; avg_light: number }) => ({
             t: h.hour,
             temperature: Number(h.avg_temp),
-            soil_moisture: Number(h.avg_soil),
+            soil_moisture: h.avg_soil == null ? null : Number(h.avg_soil),
             light: Number(h.avg_light),
           }))
         );
@@ -120,7 +158,7 @@ export default function Dashboard() {
     } catch {
       // server sedang restart / jaringan putus: coba lagi di polling berikutnya
     }
-  }, [selected, range]);
+  }, [selected, range, demoActuators]);
 
   // Ambil data sekarang, lalu ulangi tiap 2 detik
   useEffect(() => {
@@ -134,6 +172,13 @@ export default function Dashboard() {
 
   const device = devices.find((d) => d.id === selected);
   const latest = device?.latest;
+  // GH-01 memiliki soil moisture dan aktuator; GH-02 hanya DHT11 dan LDR.
+  const hasSoilAndActuators = selected === "gh-01";
+  const isDemoGreenhouse = selected === "gh-02";
+
+  function toggleDemoActuator(key: "pump" | "fan" | "grow_light") {
+    setDemoActuators((previous) => ({ ...previous, [key]: !previous[key] }));
+  }
 
   // Memeriksa izin notifikasi browser
 useEffect(() => {
@@ -154,7 +199,7 @@ useEffect(() => {
   }[] = [];
 
   // Perangkat offline
-  if (!device.online) {
+  if (!device.online && device.id !== "gh-02") {
     alerts.push({
       key: `${device.id}-offline`,
       title: "Perangkat offline",
@@ -171,13 +216,14 @@ useEffect(() => {
     alerts.push({
       key: `${device.id}-temperature`,
       title: "Suhu terlalu tinggi",
-      message: `${device.name}: suhu mencapai ${latest.temperature}°C. Periksa kondisi fan.`,
+      message: `${device.name}: suhu mencapai ${latest.temperature}°C.`,
       level: "warning",
     });
   }
 
   // Kelembapan tanah terlalu rendah
   if (
+    selected === "gh-01" &&
     latest?.soil_moisture != null &&
     latest.soil_moisture < device.soil_min
   ) {
@@ -247,12 +293,19 @@ async function enableBrowserNotifications() {
 }
 
   async function control(body: Record<string, unknown>) {
-    await fetch("/api/control", {
+    const response = await fetch("/api/control", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ device_id: selected, ...body }),
     });
-    load();
+
+    if (!response.ok) {
+      const result = await response.json().catch(() => ({}));
+      alert(result.error ?? "Pengaturan greenhouse gagal disimpan.");
+      return;
+    }
+
+    await load();
   }
 
   const tickLabel = (iso: string) =>
@@ -275,7 +328,7 @@ async function enableBrowserNotifications() {
                 value={selected}
                 onChange={(e) => setSelected(e.target.value)}
               >
-                {devices.map((d) => (
+                {devices.filter((d) => d.id === "gh-01" || d.id === "gh-02").map((d) => (
                   <option key={d.id} value={d.id}>
                     {d.name}
                   </option>
@@ -404,7 +457,7 @@ async function enableBrowserNotifications() {
                   }`}
                 >
                   {device.online ? <Wifi size={14} /> : <WifiOff size={14} />}
-                  {device.online ? "Terhubung" : "Terputus"}
+                  {isDemoGreenhouse ? "Simulasi" : device.online ? "Terhubung" : "Terputus"}
                 </span>
               )}
             </div>
@@ -422,7 +475,7 @@ async function enableBrowserNotifications() {
               }`}
             >
               <span className={`h-1.5 w-1.5 rounded-full ${device?.online ? "bg-[#1f5135]" : "bg-[#a23b2a]"}`} />
-              {device?.online ? "Sistem aktif" : "Node offline"}
+              {isDemoGreenhouse ? "MODE SIMULASI" : device?.online ? "SISTEM AKTIF" : "NODE OFFLINE"}
             </p>
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ringkasan greenhouse</h1>
             <p className="text-sm text-[#7a857d]">Pantau kondisi tanaman dan perangkat Anda.</p>
@@ -435,7 +488,7 @@ async function enableBrowserNotifications() {
 
         {/* ===== Kartu sensor ===== */}
         {device && (
-          <section className="mt-6 grid gap-6 border-t border-[#e6e6df] pt-5 md:grid-cols-3">
+          <section className="mt-6 grid gap-6 border-t border-[#e6e6df] pt-5 md:grid-cols-4">
             <SensorCard
               icon={<Thermometer size={16} />}
               tint="#fbe9e2"
@@ -445,31 +498,45 @@ async function enableBrowserNotifications() {
               unit="°C"
               percent={latest?.temperature != null ? (latest.temperature / 50) * 100 : 0}
               title="Suhu udara"
-              hint={`Fan menyala mulai ${device.temp_max}°C`}
+              hint={hasSoilAndActuators ? `Fan menyala mulai ${device.temp_max}°C` : "Pembacaan suhu dari sensor DHT11"}
               status={
                 latest?.temperature == null
                   ? null
-                  : latest.temperature >= device.temp_max
+                  : hasSoilAndActuators && latest.temperature >= device.temp_max
                     ? { text: "Panas", warn: true }
                     : { text: "Normal", warn: false }
               }
+            />
+            <SensorCard
+              icon={<Activity size={16} />}
+              tint="#e3f1e6"
+              color="#2f7d4f"
+              source="DHT11 · Kelembapan udara"
+              value={round1(latest?.humidity)}
+              unit="%"
+              percent={latest?.humidity ?? 0}
+              title="Kelembapan udara"
+              hint="Kelembapan relatif udara"
+              status={latest?.humidity == null ? null : latest.humidity < 40 ? { text: "Rendah", warn: true } : { text: "Normal", warn: false }}
             />
             <SensorCard
               icon={<Sprout size={16} />}
               tint="#e3f1e6"
               color={COLORS.soil}
               source="Soil Moisture"
-              value={round1(latest?.soil_moisture)}
+              value={hasSoilAndActuators ? round1(latest?.soil_moisture) : 0}
               unit="%"
-              percent={latest?.soil_moisture ?? 0}
+              percent={hasSoilAndActuators ? (latest?.soil_moisture ?? 0) : 0}
               title="Kelembapan tanah"
-              hint={`Pompa menyala di bawah ${device.soil_min}%`}
+              hint={hasSoilAndActuators ? `Pompa menyala di bawah ${device.soil_min}%` : "Sensor tidak tersedia pada greenhouse ini"}
               status={
-                latest?.soil_moisture == null
-                  ? null
-                  : latest.soil_moisture < device.soil_min
-                    ? { text: "Kering", warn: true }
-                    : { text: "Cukup lembap", warn: false }
+                !hasSoilAndActuators
+                  ? { text: "Tidak tersedia", warn: false }
+                  : latest?.soil_moisture == null
+                    ? null
+                    : latest.soil_moisture < device.soil_min
+                      ? { text: "Kering", warn: true }
+                      : { text: "Cukup lembap", warn: false }
               }
             />
             <SensorCard
@@ -481,13 +548,13 @@ async function enableBrowserNotifications() {
               unit="%"
               percent={latest?.light ?? 0}
               title="Intensitas cahaya"
-              hint={`Lampu menyala di bawah ${device.light_min}%`}
+              hint={hasSoilAndActuators ? `Lampu menyala di bawah ${device.light_min}%` : "Pembacaan intensitas cahaya dari sensor LDR"}
               status={
                 latest?.light == null
                   ? null
-                  : latest.light < device.light_min
+                  : hasSoilAndActuators && latest.light < device.light_min
                     ? { text: "Kurang cahaya", warn: true }
-                    : { text: "Cukup", warn: false }
+                    : { text: "Terbaca", warn: false }
               }
             />
           </section>
@@ -532,7 +599,7 @@ async function enableBrowserNotifications() {
                       contentStyle={{ borderRadius: 8, border: "1px solid #e2e2da", fontSize: 12 }}
                     />
                     <Line dataKey="temperature" name="Suhu (°C)" stroke={COLORS.temp} strokeWidth={2} dot={false} isAnimationActive={false} />
-                    <Line dataKey="soil_moisture" name="Kelembapan tanah (%)" stroke={COLORS.soil} strokeWidth={2} dot={false} isAnimationActive={false} />
+                    <Line dataKey="soil_moisture" name="Kelembapan tanah (%)" stroke={COLORS.soil} strokeWidth={2} dot={false} isAnimationActive={false} connectNulls={false} />
                     <Line dataKey="light" name="Cahaya (%)" stroke={COLORS.light} strokeWidth={2} dot={false} isAnimationActive={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -611,15 +678,19 @@ async function enableBrowserNotifications() {
                 </div>
 
                 <div className="mt-4 flex items-start gap-3 border-b border-[#e6e6df] pb-4">
-                  <IconBox active={false}>{device.mode === "manual" ? <Hand size={16} /> : <Bot size={16} />}</IconBox>
+                  <IconBox active>{device.mode === "manual" ? <Hand size={16} /> : <Bot size={16} />}</IconBox>
                   <div>
                     <p className="text-sm font-medium">
                       {device.mode === "manual" ? "Kontrol manual aktif" : "Kontrol otomatis aktif"}
                     </p>
                     <p className="text-xs text-[#7a857d]">
                       {device.mode === "manual"
-                        ? "Atur perangkat satu per satu sesuai kebutuhan."
-                        : "Perangkat menyala sesuai threshold di bawah."}
+                        ? hasSoilAndActuators
+                          ? "Atur perangkat satu per satu sesuai kebutuhan."
+                          : "Mode manual aktif. Tidak ada aktuator fisik pada greenhouse ini."
+                        : hasSoilAndActuators
+                          ? "Perangkat menyala sesuai threshold di bawah."
+                          : "Mode otomatis aktif. Threshold tersimpan sebagai konfigurasi."}
                     </p>
                   </div>
                 </div>
@@ -628,28 +699,34 @@ async function enableBrowserNotifications() {
                   icon={<Sprout size={16} />}
                   name="Water pump"
                   desc="Siram tanaman"
-                  actual={latest?.pump}
-                  commanded={device.pump_cmd}
+                  actual={isDemoGreenhouse ? demoActuators.pump : latest?.pump}
+                  commanded={isDemoGreenhouse ? demoActuators.pump : device.pump_cmd}
                   manual={device.mode === "manual"}
-                  onToggle={() => control({ pump: !device.pump_cmd })}
+                  available={true}
+                  simulated={isDemoGreenhouse}
+                  onToggle={() => isDemoGreenhouse ? toggleDemoActuator("pump") : control({ pump: !device.pump_cmd })}
                 />
                 <ActuatorRow
                   icon={<Lightbulb size={16} />}
                   name="Grow light"
                   desc="Penerangan tanaman"
-                  actual={latest?.grow_light}
-                  commanded={device.light_cmd}
+                  actual={isDemoGreenhouse ? demoActuators.grow_light : latest?.grow_light}
+                  commanded={isDemoGreenhouse ? demoActuators.grow_light : device.light_cmd}
                   manual={device.mode === "manual"}
-                  onToggle={() => control({ grow_light: !device.light_cmd })}
+                  available={true}
+                  simulated={isDemoGreenhouse}
+                  onToggle={() => isDemoGreenhouse ? toggleDemoActuator("grow_light") : control({ grow_light: !device.light_cmd })}
                 />
                 <ActuatorRow
                   icon={<Fan size={16} />}
                   name="Mini fan"
                   desc="Sirkulasi udara"
-                  actual={latest?.fan}
-                  commanded={device.fan_cmd}
+                  actual={isDemoGreenhouse ? demoActuators.fan : latest?.fan}
+                  commanded={isDemoGreenhouse ? demoActuators.fan : device.fan_cmd}
                   manual={device.mode === "manual"}
-                  onToggle={() => control({ fan: !device.fan_cmd })}
+                  available={true}
+                  simulated={isDemoGreenhouse}
+                  onToggle={() => isDemoGreenhouse ? toggleDemoActuator("fan") : control({ fan: !device.fan_cmd })}
                 />
               </section>
 
@@ -660,7 +737,7 @@ async function enableBrowserNotifications() {
                 onSubmit={(e) => {
                   e.preventDefault();
                   control({
-                    ...(soilMin && { soil_min: Number(soilMin) }),
+                    ...(hasSoilAndActuators && soilMin && { soil_min: Number(soilMin) }),
                     ...(tempMax && { temp_max: Number(tempMax) }),
                     ...(lightMin && { light_min: Number(lightMin) }),
                   });
@@ -670,9 +747,9 @@ async function enableBrowserNotifications() {
                 }}
               >
                 <h2 className="font-semibold">Threshold (mode auto)</h2>
-                <ThresholdInput label="Pompa ON jika tanah < (%)" placeholder={device.soil_min} value={soilMin} onChange={setSoilMin} />
-                <ThresholdInput label="Fan ON jika suhu ≥ (°C)" placeholder={device.temp_max} value={tempMax} onChange={setTempMax} />
-                <ThresholdInput label="Grow light ON jika cahaya < (%)" placeholder={device.light_min} value={lightMin} onChange={setLightMin} />
+                <ThresholdInput disabled={!hasSoilAndActuators} label="Pompa ON jika tanah < (%)" placeholder={device.soil_min} value={soilMin} onChange={setSoilMin} />
+                <ThresholdInput label={hasSoilAndActuators ? "Fan ON jika suhu ≥ (°C)" : "Batas peringatan suhu ≥ (°C)"} placeholder={device.temp_max} value={tempMax} onChange={setTempMax} />
+                <ThresholdInput label={hasSoilAndActuators ? "Grow light ON jika cahaya < (%)" : "Batas peringatan cahaya < (%)"} placeholder={device.light_min} value={lightMin} onChange={setLightMin} />
                 <button className="w-full rounded-lg bg-[#1f5135] py-2 text-sm font-medium text-white hover:bg-[#184129]">
                   Simpan
                 </button>
@@ -753,6 +830,8 @@ function ActuatorRow(props: {
   actual: boolean | undefined;
   commanded: boolean;
   manual: boolean;
+  available: boolean;
+  simulated?: boolean;
   onToggle: () => void;
 }) {
   const on = !!props.actual;
@@ -764,30 +843,31 @@ function ActuatorRow(props: {
         <IconBox active={on}>{props.icon}</IconBox>
         <div>
           <p className="text-sm font-medium">{props.name}</p>
-          <p className="text-xs text-[#7a857d]">{props.desc}</p>
+          <p className="text-xs text-[#7a857d]">{props.simulated ? `${props.desc} · Simulasi` : props.desc}</p>
         </div>
       </div>
       <button
         onClick={props.onToggle}
-        disabled={!props.manual}
-        title={props.manual ? "" : "Pindah ke mode Manual untuk mengatur perangkat"}
-        className={`min-w-[72px] rounded-lg border px-3 py-1.5 text-sm transition disabled:cursor-not-allowed ${
+        disabled={!props.available || !props.manual}
+        title={!props.available ? "Aktuator tidak tersedia pada greenhouse ini" : props.manual ? "" : "Pindah ke mode Manual untuk mengatur perangkat"}
+        className={`min-w-[100px] rounded-lg border px-3 py-1.5 text-sm transition disabled:cursor-not-allowed ${
           on ? "border-[#1f5135] bg-[#e3f1e6] text-[#1f5135]" : "border-[#e2e2da] bg-white text-[#1d2b22]"
         } ${props.manual ? "hover:shadow-sm" : "opacity-70"}`}
       >
-        {waiting ? "…" : on ? "Aktif" : "Mati"}
+        {!props.available ? "Tidak tersedia" : waiting ? "…" : on ? "Aktif" : "Mati"}
       </button>
     </div>
   );
 }
 
-function ThresholdInput(props: { label: string; placeholder: number; value: string; onChange: (v: string) => void }) {
+function ThresholdInput(props: { label: string; placeholder: number; value: string; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <label className="flex items-center justify-between gap-2 text-[13px]">
       {props.label}
       <input
         type="number"
-        className="w-16 shrink-0 rounded-lg border border-[#e2e2da] px-2 py-1 text-right outline-none focus:border-[#1f5135]"
+        disabled={props.disabled}
+        className="w-16 shrink-0 rounded-lg border border-[#e2e2da] px-2 py-1 text-right outline-none focus:border-[#1f5135] disabled:cursor-not-allowed disabled:bg-[#f0f0ec]"
         placeholder={String(props.placeholder)}
         value={props.value}
         onChange={(e) => props.onChange(e.target.value)}

@@ -30,7 +30,7 @@ type Device = {
 };
 type ActuatorEvent = { actuator: string; state: boolean; source: string; created_at: string };
 
-const POLL_MS = 5000;
+const POLL_MS = 2000;
 const time = (iso: string) => new Date(iso).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
 
 export default function Dashboard() {
@@ -49,7 +49,7 @@ export default function Dashboard() {
     const id = selected || list[0]?.id;
     if (!id) return;
     if (!selected) setSelected(id);
-    const res = await fetch(`/api/readings?device_id=${id}&hours=1`).then((r) => r.json());
+    const res = await fetch(`/api/readings?device_id=${id}&hours=0.5`).then((r) => r.json());
     setReadings(res.readings ?? []);
     setEvents(res.events ?? []);
   }, [selected]);
@@ -214,7 +214,7 @@ export default function Dashboard() {
 
           {/* Grafik realtime 1 jam terakhir */}
           <section className="rounded-lg border p-4">
-            <h2 className="font-semibold mb-3">1 jam terakhir</h2>
+            <h2 className="font-semibold mb-3">30 Menit terakhir</h2>
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={readings}>

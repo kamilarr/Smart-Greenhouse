@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from "recharts";
 import {
@@ -16,6 +16,8 @@ import {
   Thermometer,
   Wifi,
   WifiOff,
+  Bell,
+  X,
 } from "lucide-react";
 
 type Reading = {
@@ -45,6 +47,13 @@ type Device = {
 type ActuatorEvent = { actuator: string; state: boolean; source: string; created_at: string };
 type ChartPoint = { t: string; temperature: number | null; soil_moisture: number | null; light: number | null };
 type Range = "30m" | "24h" | "7d";
+type AppNotification = {
+  id: string;
+  title: string;
+  message: string;
+  createdAt: string;
+  level: "warning" | "danger";
+};
 
 const POLL_MS = 2000;
 
@@ -66,6 +75,13 @@ export default function Dashboard() {
   const [soilMin, setSoilMin] = useState("");
   const [tempMax, setTempMax] = useState("");
   const [lightMin, setLightMin] = useState("");
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [permission, setPermission] =
+    useState<NotificationPermission>("default");
+
+  // Mencegah notifikasi yang sama muncul berulang kali
+  const activeAlerts = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -119,6 +135,117 @@ export default function Dashboard() {
   const device = devices.find((d) => d.id === selected);
   const latest = device?.latest;
 
+  // Memeriksa izin notifikasi browser
+useEffect(() => {
+  if ("Notification" in window) {
+    setPermission(Notification.permission);
+  }
+}, []);
+
+// Memeriksa kondisi greenhouse dan membuat peringatan
+useEffect(() => {
+  if (!device) return;
+
+  const alerts: {
+    key: string;
+    title: string;
+    message: string;
+    level: "warning" | "danger";
+  }[] = [];
+
+  // Perangkat offline
+  if (!device.online) {
+    alerts.push({
+      key: `${device.id}-offline`,
+      title: "Perangkat offline",
+      message: `${device.name} tidak mengirimkan data. Periksa koneksi ESP32.`,
+      level: "danger",
+    });
+  }
+
+  // Suhu terlalu tinggi
+  if (
+    latest?.temperature != null &&
+    latest.temperature >= device.temp_max
+  ) {
+    alerts.push({
+      key: `${device.id}-temperature`,
+      title: "Suhu terlalu tinggi",
+      message: `${device.name}: suhu mencapai ${latest.temperature}°C. Periksa kondisi fan.`,
+      level: "warning",
+    });
+  }
+
+  // Kelembapan tanah terlalu rendah
+  if (
+    latest?.soil_moisture != null &&
+    latest.soil_moisture < device.soil_min
+  ) {
+    alerts.push({
+      key: `${device.id}-soil`,
+      title: "Tanah terlalu kering",
+      message: `${device.name}: kelembapan tanah ${latest.soil_moisture}%, di bawah threshold ${device.soil_min}%.`,
+      level: "warning",
+    });
+  }
+
+  // Intensitas cahaya terlalu rendah
+  if (
+    latest?.light != null &&
+    latest.light < device.light_min
+  ) {
+    alerts.push({
+      key: `${device.id}-light`,
+      title: "Cahaya kurang",
+      message: `${device.name}: intensitas cahaya ${latest.light}%, di bawah threshold ${device.light_min}%.`,
+      level: "warning",
+    });
+  }
+
+  const currentKeys = new Set(alerts.map((alert) => alert.key));
+
+  // Hanya membuat notifikasi saat kondisi baru mulai terjadi
+  alerts.forEach((alert) => {
+    if (activeAlerts.current.has(alert.key)) return;
+
+    const notification: AppNotification = {
+      id: `${alert.key}-${Date.now()}`,
+      title: alert.title,
+      message: alert.message,
+      createdAt: new Date().toISOString(),
+      level: alert.level,
+    };
+
+    setNotifications((previous) =>
+      [notification, ...previous].slice(0, 30)
+    );
+
+    // Notifikasi sistem laptop/HP jika izin sudah diberikan
+    if (
+      "Notification" in window &&
+      Notification.permission === "granted"
+    ) {
+      new Notification(`Smart Greenhouse - ${alert.title}`, {
+        body: alert.message,
+        tag: alert.key,
+      });
+    }
+  });
+
+  activeAlerts.current = currentKeys;
+}, [device, latest]);
+
+// Meminta izin notifikasi browser
+async function enableBrowserNotifications() {
+  if (!("Notification" in window)) {
+    alert("Browser ini belum mendukung notifikasi.");
+    return;
+  }
+
+  const result = await Notification.requestPermission();
+  setPermission(result);
+}
+
   async function control(body: Record<string, unknown>) {
     await fetch("/api/control", {
       method: "POST",
@@ -157,24 +284,131 @@ export default function Dashboard() {
               <p className="text-xs text-[#7a857d]">{device?.location ?? "-"}</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Link
-              href="/analytics"
-              className="flex items-center gap-1.5 rounded-full border border-[#e2e2da] px-3 py-1 text-xs text-[#4b5a50] hover:bg-[#f3f3ee]"
-            >
-              <ChartColumn size={14} /> Analytics
-            </Link>
-            {device && (
-              <span
-                className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
-                  device.online ? "bg-[#e3f1e6] text-[#1f5135]" : "bg-[#fbe6e2] text-[#a23b2a]"
-                }`}
+          
+            <div className="flex items-center gap-2">
+              {/* Tombol notifikasi */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setNotificationOpen((open) => !open)}
+                  className="relative flex items-center gap-1.5 rounded-full border border-[#e2e2da] px-3 py-1.5 text-xs text-[#4b5a50] hover:bg-[#f3f3ee]"
+                >
+                  <Bell size={14} />
+                  Notifikasi
+
+                  {notifications.length > 0 && (
+                    <span className="rounded-full bg-[#e0592a] px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                      {notifications.length}
+                    </span>
+                  )}
+                </button>
+
+                {/* Panel notifikasi */}
+                {notificationOpen && (
+                  <div className="absolute right-0 top-10 z-50 w-[min(90vw,360px)] rounded-xl border border-[#e6e6df] bg-white p-4 shadow-xl">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-[#1d2b22]">
+                        Notifikasi
+                      </h3>
+
+                      <button
+                        type="button"
+                        onClick={() => setNotificationOpen(false)}
+                        className="rounded p-1 text-[#7a857d] hover:bg-[#f3f3ee]"
+                        aria-label="Tutup notifikasi"
+                      >
+                        <X size={17} />
+                      </button>
+                    </div>
+
+                    {/* Izin notifikasi browser */}
+                    <button
+                      type="button"
+                      onClick={enableBrowserNotifications}
+                      disabled={permission === "granted"}
+                      className="mt-3 w-full rounded-lg bg-[#1f5135] px-3 py-2 text-xs font-medium text-white hover:bg-[#184129] disabled:bg-[#e3f1e6] disabled:text-[#1f5135]"
+                    >
+                      {permission === "granted"
+                        ? "Notifikasi browser aktif"
+                        : permission === "denied"
+                          ? "Izin ditolak - periksa pengaturan browser"
+                          : "Aktifkan notifikasi laptop / HP"}
+                    </button>
+
+                    <p className="mt-2 text-[11px] text-[#7a857d]">
+                      Izinkan notifikasi browser agar peringatan dapat muncul
+                      di luar halaman website saat browser masih berjalan.
+                    </p>
+
+                    {/* Daftar peringatan */}
+                    <div className="mt-3 max-h-72 space-y-2 overflow-y-auto">
+                      {notifications.length === 0 ? (
+                        <p className="py-6 text-center text-xs text-[#7a857d]">
+                          Belum ada peringatan.
+                        </p>
+                      ) : (
+                        notifications.map((item) => (
+                          <div
+                            key={item.id}
+                            className={`rounded-lg border p-3 ${
+                              item.level === "danger"
+                                ? "border-red-200 bg-red-50"
+                                : "border-amber-200 bg-amber-50"
+                            }`}
+                          >
+                            <p className="text-sm font-semibold text-[#1d2b22]">
+                              {item.title}
+                            </p>
+
+                            <p className="mt-1 text-xs text-[#4b5a50]">
+                              {item.message}
+                            </p>
+
+                            <p className="mt-2 text-[10px] text-[#7a857d]">
+                              {new Date(item.createdAt).toLocaleString("id-ID")}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+
+                    {notifications.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setNotifications([])}
+                        className="mt-3 text-xs font-medium text-[#1f5135] hover:underline"
+                      >
+                        Hapus semua notifikasi
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Link Analytics */}
+              <Link
+                href="/analytics"
+               className="flex items-center gap-1.5 rounded-full border border-[#e2e2da] px-3 py-1 text-xs text-[#4b5a50] hover:bg-[#f3f3ee]"
               >
-                {device.online ? <Wifi size={14} /> : <WifiOff size={14} />}
-                {device.online ? "Terhubung" : "Terputus"}
-              </span>
-            )}
-          </div>
+                <ChartColumn size={14} />
+                Analytics
+              </Link>
+
+              {/* Status perangkat */}
+              {device && ( 
+                <span
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ${
+                    device.online
+                      ? "bg-[#e3f1e6] text-[#1f5135]"
+                      : "bg-[#fbe6e2] text-[#a23b2a]"
+                  }`}
+                >
+                  {device.online ? <Wifi size={14} /> : <WifiOff size={14} />}
+                  {device.online ? "Terhubung" : "Terputus"}
+                </span>
+              )}
+            </div>
+
         </div>
       </header>
 

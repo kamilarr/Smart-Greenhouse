@@ -488,7 +488,7 @@ async function enableBrowserNotifications() {
 
         {/* ===== Kartu sensor ===== */}
         {device && (
-          <section className="mt-6 grid gap-6 border-t border-[#e6e6df] pt-5 md:grid-cols-4">
+          <section className="mt-6 grid gap-6 border-t border-[#e6e6df] pt-5 md:grid-cols-3">
             <SensorCard
               icon={<Thermometer size={16} />}
               tint="#fbe9e2"
@@ -506,18 +506,6 @@ async function enableBrowserNotifications() {
                     ? { text: "Panas", warn: true }
                     : { text: "Normal", warn: false }
               }
-            />
-            <SensorCard
-              icon={<Activity size={16} />}
-              tint="#e3f1e6"
-              color="#2f7d4f"
-              source="DHT11 · Kelembapan udara"
-              value={round1(latest?.humidity)}
-              unit="%"
-              percent={latest?.humidity ?? 0}
-              title="Kelembapan udara"
-              hint="Kelembapan relatif udara"
-              status={latest?.humidity == null ? null : latest.humidity < 40 ? { text: "Rendah", warn: true } : { text: "Normal", warn: false }}
             />
             <SensorCard
               icon={<Sprout size={16} />}

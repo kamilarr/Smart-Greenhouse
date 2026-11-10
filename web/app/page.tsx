@@ -11,7 +11,6 @@ import {
   Fan,
   Hand,
   Lightbulb,
-  SlidersHorizontal,
   Sprout,
   Sun,
   Thermometer,
@@ -194,16 +193,10 @@ export default function Dashboard() {
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ringkasan greenhouse</h1>
             <p className="text-sm text-[#7a857d]">Pantau kondisi tanaman dan perangkat Anda.</p>
           </div>
-          <div className="flex items-center gap-3 text-xs text-[#7a857d]">
-            <Clock size={14} />
-            Diperbarui {latest ? clock(new Date(latest.created_at)) : "-"}
-            <a
-              href="#threshold"
-              className="flex items-center gap-1.5 rounded-lg border border-[#e2e2da] bg-white px-3 py-2 text-sm text-[#1d2b22] hover:bg-[#f3f3ee]"
-            >
-              <SlidersHorizontal size={15} /> Pengaturan
-            </a>
-          </div>
+            <div className="flex items-center gap-2 text-xs text-[#7a857d]">
+              <Clock size={14} />
+              Diperbarui {latest ? clock(new Date(latest.created_at)) : "-"}
+            </div>  
         </div>
 
         {/* ===== Kartu sensor ===== */}

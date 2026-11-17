@@ -25,6 +25,7 @@ type Hourly = {
   pump_on_pct: number;
   fan_on_pct: number;
   grow_light_on_pct: number;
+  avg_latency: number | null;
 };
 
 type Summary = Record<string, number | null>;
@@ -37,6 +38,7 @@ const COLORS = {
   pump: "#2f7d4f",
   fan: "#3b82c4",
   grow: "#ca8a04",
+  latency: "#7c5cc4",
 };
 
 const hourLabel = (iso: string) =>
@@ -190,6 +192,16 @@ export default function Analytics() {
               value={summary.manual_actions}
               unit="kali"
             />
+            <Stat
+              label="Rata-rata latency"
+              value={summary.avg_latency}
+              unit="ms"
+            />
+            <Stat
+              label="Latency min / max"
+              value={`${summary.min_latency ?? "-"} / ${summary.max_latency ?? "-"}`}
+              unit="ms"
+            />
           </section>
         )}
 
@@ -311,6 +323,43 @@ export default function Analytics() {
                   radius={[4, 4, 0, 0]}
                 />
               </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </section>
+
+        {/* Grafik latency */}
+        <section className="rounded-xl border border-[#e6e6df] bg-white p-4 shadow-sm sm:p-5">
+          <h2 className="font-semibold">Rata-rata latency per jam</h2>
+          <p className="mb-4 text-xs text-[#7a857d]">
+            Waktu dari ESP32 mengirim data sampai server membalas (HTTP round-trip).
+          </p>
+
+          <div className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={hourly} margin={{ top: 5, right: 10, left: -5, bottom: 5 }}>
+                <CartesianGrid stroke="#e9e9e3" strokeDasharray="3 3" />
+                <XAxis
+                  dataKey="hour"
+                  tickFormatter={hourLabel}
+                  minTickGap={40}
+                  tick={axisStyle}
+                  axisLine={{ stroke: "#d9d9d1" }}
+                  tickLine={false}
+                />
+                <YAxis unit=" ms" tick={axisStyle} axisLine={false} tickLine={false} />
+                <Tooltip
+                  labelFormatter={(v) => hourLabel(String(v))}
+                  contentStyle={tooltipStyle}
+                />
+                <Line
+                  dataKey="avg_latency"
+                  name="Latency (ms)"
+                  stroke={COLORS.latency}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+              </LineChart>
             </ResponsiveContainer>
           </div>
         </section>

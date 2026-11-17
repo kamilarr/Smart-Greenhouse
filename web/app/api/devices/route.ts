@@ -14,7 +14,7 @@ export async function GET() {
     devices.map(async (d) => {
       const { data: latest } = await supabase
         .from("sensor_readings")
-        .select("temperature, humidity, soil_moisture, light, pump, fan, grow_light, created_at")
+        .select("temperature, humidity, soil_moisture, light, pump, fan, grow_light, latency_ms, created_at")
         .eq("device_id", d.id)
         .order("created_at", { ascending: false })
         .limit(1)

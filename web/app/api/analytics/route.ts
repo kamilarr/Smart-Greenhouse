@@ -38,10 +38,18 @@ export async function GET(req: NextRequest) {
   if (hourly.error) return NextResponse.json({ error: hourly.error.message }, { status: 500 });
 
   const rows = hourly.data;
+  const lat = rows.filter((r) => r.avg_latency != null);
+  const latencyMin = lat.length ? Math.min(...lat.map((r) => Number(r.min_latency))) : null;
+  const latencyMax = lat.length ? Math.max(...lat.map((r) => Number(r.max_latency))) : null;
   const avg = (key: string) => {
-    const vals = rows.map((r) => Number(r[key])).filter((v) => Number.isFinite(v));
+    const vals = rows
+      .filter((r) => r[key] != null) // kosong tidak dihitung sebagai 0
+      .map((r) => Number(r[key]))
+      .filter((v) => Number.isFinite(v));
     return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(1) : null;
   };
+
+  const avgLatency = avg("avg_latency");
 
   return NextResponse.json({
     hourly: rows,
@@ -60,6 +68,9 @@ export async function GET(req: NextRequest) {
       grow_light_switch_on: lightOn,
       manual_actions: manual,
       samples: rows.reduce((a, r) => a + Number(r.samples), 0),
+      avg_latency: avgLatency == null ? null : Math.round(avgLatency),
+      min_latency: latencyMin,
+      max_latency: latencyMax,
     },
   });
 }

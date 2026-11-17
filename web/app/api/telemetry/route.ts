@@ -3,7 +3,7 @@ import { supabase } from "@/lib/supabase";
 
 // ESP32 -> POST /api/telemetry
 // Header : x-device-key: <api_key>
-// Body   : { temperature, humidity, soil_moisture, light, pump, fan, grow_light }
+// Body   : { temperature, humidity, soil_moisture, light, pump, fan, grow_light, latency_ms? }
 // Balasan: { mode, pump, fan, grow_light, soil_min, temp_max, light_min }
 export async function POST(req: NextRequest) {
   const key = req.headers.get("x-device-key");
@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
     pump: body.pump,
     fan: body.fan,
     grow_light: body.grow_light,
+    latency_ms: typeof body.latency_ms === "number" ? Math.round(body.latency_ms) : null,
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 

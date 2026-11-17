@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const [readings, events] = await Promise.all([
     supabase
       .from("sensor_readings")
-      .select("temperature, humidity, soil_moisture, light, pump, fan, grow_light, created_at")
+      .select("temperature, humidity, soil_moisture, light, pump, fan, grow_light, latency_ms, created_at")
       .eq("device_id", deviceId)
       .gte("created_at", since)
       .order("created_at", { ascending: false })

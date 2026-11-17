@@ -14,6 +14,7 @@ import {
   Sprout,
   Sun,
   Thermometer,
+  Timer,
   Wifi,
   WifiOff,
   Bell,
@@ -28,6 +29,7 @@ type Reading = {
   pump: boolean;
   fan: boolean;
   grow_light: boolean;
+  latency_ms?: number | null;
   created_at: string;
 };
 type Device = {
@@ -69,6 +71,7 @@ export default function Dashboard() {
   const [devices, setDevices] = useState<Device[]>([]);
   const [selected, setSelected] = useState("");
   const [chart, setChart] = useState<ChartPoint[]>([]);
+  const [avgLatency, setAvgLatency] = useState<number | null>(null);
   const [range, setRange] = useState<Range>("30m");
   const [events, setEvents] = useState<ActuatorEvent[]>([]);
   const [demoActuators, setDemoActuators] = useState({ pump: false, fan: false, grow_light: false });
@@ -114,6 +117,7 @@ export default function Dashboard() {
           setDevices(list);
         }
         setEvents([]);
+        setAvgLatency(null);
         const pointCount = range === "30m" ? 16 : range === "24h" ? 24 : 7;
         const interval = range === "30m" ? 2 * 60_000 : range === "24h" ? 60 * 60_000 : 24 * 60 * 60_000;
         setChart(Array.from({ length: pointCount }, (_, index) => {
@@ -133,6 +137,13 @@ export default function Dashboard() {
       // Greenhouse 1 mengambil data asli dari API/Supabase.
       const readings = await fetch(`/api/readings?device_id=${id}&hours=0.5`).then((r) => r.json());
       setEvents(readings.events ?? []);
+      // Rata-rata latency 30 menit terakhir (diukur ESP32 untuk tiap request)
+      const latencies = (readings.readings ?? [])
+        .map((r: Reading) => r.latency_ms)
+        .filter((v: number | null | undefined): v is number => v != null);
+      setAvgLatency(
+        latencies.length ? Math.round(latencies.reduce((a: number, b: number) => a + b, 0) / latencies.length) : null
+      );
       if (range === "30m") {
         setChart(
           (readings.readings ?? []).map((r: Reading) => ({
@@ -480,10 +491,20 @@ async function enableBrowserNotifications() {
             <h1 className="mt-1 text-2xl font-semibold tracking-tight">Ringkasan greenhouse</h1>
             <p className="text-sm text-[#7a857d]">Pantau kondisi tanaman dan perangkat Anda.</p>
           </div>
-            <div className="flex items-center gap-2 text-xs text-[#7a857d]">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-[#7a857d]">
+              {!isDemoGreenhouse && (
+                <span
+                  className="flex items-center gap-1.5 rounded-full border border-[#e2e2da] bg-white px-2.5 py-1"
+                  title="Waktu dari ESP32 mengirim data sampai server membalas"
+                >
+                  <Timer size={14} />
+                  Latency {latest?.latency_ms != null ? `${latest.latency_ms} ms` : "-"}
+                  {avgLatency != null && <span className="text-[#a3aba5]">· rata-rata {avgLatency} ms</span>}
+                </span>
+              )}
               <Clock size={14} />
               Diperbarui {latest ? clock(new Date(latest.created_at)) : "-"}
-            </div>  
+            </div>
         </div>
 
         {/* ===== Kartu sensor ===== */}
